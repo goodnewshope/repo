@@ -1,0 +1,14 @@
+Tsql to make AG RESUME again 
+
+
+
+ALTER DATABASE [mi9_mms_sp_prod] SET HADR RESUME; 
+
+GO
+
+After completing the full backup and tlog backup in secondry in norecovery mode I will the following script to syn both server together .
+
+
+ALTER DATABASE mi9_mms_sp_prod SET HADR AVAILABILITY GROUP = 
+AG_Name ; 
+GO
