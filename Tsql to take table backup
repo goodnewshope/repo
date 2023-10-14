@@ -1,0 +1,5 @@
+Tsql to take table backup
+
+
+select * into Ecomm_Sku_bak from Ecomm_Sku
+
