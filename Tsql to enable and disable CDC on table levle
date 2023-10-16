@@ -1,0 +1,15 @@
+EXEC sys.sp_cdc_disable_table  @source_schema = N'dbo', @source_name = N'mms_product_vendor', @capture_instance = N'dbo_mms_product_vendor'
+---truncate
+
+reload
+update version table for that table row
+EXEC sys.sp_cdc_enable_table  @source_schema = N'dbo', @source_name = N'mms_product_vendor', @role_name = NULL
+
+
+
+EXEC sys.sp_cdc_disable_table  @source_schema = N'dbo', @source_name = N'ecomm_sku', @capture_instance = N'dbo_ecomm_sku'
+---truncate
+
+reload
+update version table for that table row
+EXEC sys.sp_cdc_enable_table  @source_schema = N'dbo', @source_name = N'ecomm_sku', @role_name = NULL
