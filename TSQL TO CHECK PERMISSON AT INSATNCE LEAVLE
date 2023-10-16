@@ -1,0 +1,28 @@
+--select sp.name collate SQL_Latin1_General_CP1_CI_AS as server_login_name , ''as ServerRolename, sp.type_desc collate SQL_Latin1_General_CP1_CI_AS AS LoginName
+--from master.sys.server_principals sp
+--where sp.type IN ('S','G','U')
+--       AND sp.name NOT LIKE '##%##'
+--       AND sp.name NOT LIKE 'NT AUTHORITY%'
+--       AND sp.name NOT LIKE 'NT SERVICE%'
+--       AND sp.name <> ('sa')
+--UNION ALL
+ 
+ 
+select SL.name collate SQL_Latin1_General_CP1_CI_AS as server_login_name, SR.name collate SQL_Latin1_General_CP1_CI_AS as server_role ,''AS Permission 
+FROM master.sys.server_role_members SRM
+   JOIN master.sys.server_principals SR ON SR.principal_id = SRM.role_principal_id
+   JOIN master.sys.server_principals SL ON SL.principal_id = SRM.member_principal_id
+WHERE SL.type IN ('S','G','U')
+       AND SL.name NOT LIKE '##%##'
+       AND SL.name NOT LIKE 'NT AUTHORITY%'
+       AND SL.name NOT LIKE 'NT SERVICE%'
+       AND SL.name <> ('sa')
+UNION ALL
+select SP.name as server_login_name,SrvPerm.permission_name ,SrvPerm.state_desc
+FROM sys.server_permissions AS SrvPerm
+   JOIN sys.server_principals AS SP ON SrvPerm.grantee_principal_id = SP.principal_id
+WHERE   SP.type IN ( 'S', 'U', 'G' )
+       AND SP.name NOT LIKE '##%##'
+       AND SP.name NOT LIKE 'NT AUTHORITY%'
+       AND SP.name NOT LIKE 'NT SERVICE%'
+       AND SP.name <> ('sa') ;
