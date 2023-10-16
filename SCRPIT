@@ -1,0 +1,803 @@
+TSQL TO CHECK THE CDC OF THE DB
+
+Use [mi9_mms_sp_prod]
+Go
+SELECT * FROM batchlog WHERE starttime > '2022-07-28'
+
+
+..................................................................................................................................................................................
+sp_Blitz   
+sp_Blitz @Help = 1;
+sp_Blitz @IgnorePrioritiesAbove = 50;
+sp_Blitz @CheckUserDatabaseObjects= 0;
+sp_Blitz @OutputDatabaseName = 'DBAtools', @OutputSchemaName = 'dbo', @OutputTableName = 'Blitzresults';
+
+sp_BlitzCache
+sp_BlitzCache @DatabaseName = 'Stackverflow';
+sp_BlitzCache @sortorder = 'reads';   
+for CPU PUT cpu,for long runnng put DURATION,  execution, XPM, memory, grant, recent, compilation
+
+
+sp_BlitzFirst
+EXEC sp_BlitzFirst @Expertmode = 1;
+EXEC sp_BlitzFirst @sincestartup = 1;
+exec sp_BlitzWho @GetOuterCommand = 1;
+
+
+sp_BlitzIndex
+sp_BlitzWho
+
+SP_WHOISACTIVE
+
+SP_WHOISACTIVE @get_plans=1
+
+
+
+SET STATISTICS IO ON
+SET STATISTICS TIME ON
+
+SP_WHOISACTIVE
+
+..................................................................................................................................................................................
+
+
+USPC042\PRODUCTION1  I need to make the system db to everyday backup
+SELECT name, recovery_model_desc FROM sys.databases
+SELECT name, log_reuse_wait_desc
+FROM sys.databases
+DBCC OPENTRAN
+xp_readerrorlog 0,1,N
+
+.........................................................................................
+scrpit to check all recod in a table 
+
+select * from name of the table
+.........................................................................................
+
+
+TSQL to grate permisson on table leve 
+
+USE MMS_Integration
+Go
+GRANT Insert on [dbo].[mms_po_receipt] to [SGICORP\BWeist]
+
+
+.........................................................................................
+
+TSQL TO KNOW WAIT TYPE AND BLOCKING SESSION OR CORRECT WAIT TASK WAITING FOR RESOURCE 
+
+select * from sys.dm_os_waiting_tasks where session_id>50
+
+...........................................................................................
+
+TSQL TO KNOW THE WAIT TASKS HISTRY 
+
+select * from sys.dm_os_wait_stats order by wait_time_ms desc
+
+.........................................................................................
+ https://docs.microsoft.com/en-us/sql/relational-databases/stored-procedures/grant-permissions-on-a-stored-procedure?view=sql-server-ver16
+
+TSQL To grant permissions on a stored procedure
+
+USE Flash_Sales  
+GRANT EXECUTE ON OBJECT::FlashReporting_ECOMM_Sales_CHK_BI  
+    TO[SGICORP\TGallagher];  
+GO
+
+.........................................................................................
+
+TSQL to see the active jobs runing on the server 
+
+USE msdb
+select distinct j.Name as "Job Name", --j.job_id,
+
+case j.enabled
+
+when 1 then 'Enable'
+
+when 0 then 'Disable'
+
+end as "Job Status", jh.run_date as [Last_Run_Date(YY-MM-DD)] ,
+
+case jh.run_status
+
+when 0 then 'Failed'
+
+when 1 then 'Successful'
+
+when 2 then 'Retry'
+
+when 3 then 'Cancelled'
+
+when 4 then 'In Progress'
+
+end as Job_Execution_Status
+
+from sysJobHistory jh, sysJobs j
+
+where j.job_id = jh.job_id and jh.run_date =
+
+(select max(hi.run_date) from sysJobHistory hi where jh.job_id = hi.job_id )
+
+
+.........................................................................................
+
+scrpit to see the active enabled jobs runing on the server 
+
+
+sys.dm_db_missing_index_details
+
+SELECT * from  msdb.dbo.sysjobs
+where enabled=1 
+
+.........................................................................................
+scrpit  check the size of the database
+
+sp_helpdb AND DATABASES NAME 
+
+.........................................................................................
+scrpit to check log space
+
+
+dbcc sqlperf (logspace)
+
+SELECT name, log_reuse_wait_desc
+FROM sys.databases
+..........................................................................................
+scrpit to check all job history ....
+
+SELECT jobs.name AS 'JobName',
+msdb.dbo.agent_datetime(run_date, run_time) AS 'Run Date Time',
+history.run_duration AS 'Duration in Second'
+FROM msdb.dbo.sysjobs jobs
+INNER JOIN msdb.dbo.sysjobhistory history
+ON jobs.job_id = history.job_id
+WHERE jobs.enabled = 1
+..........................................................................................
+
+scrpit  to check all database on the server 
+USE master;  
+GO  
+SELECT name, database_id, create_date  
+FROM sys.databases;  
+GO
+...........................................................
+Script to obtain most recent SQL Server backup information for all databases
+
+WITH MostRecentBackups
+   AS(
+      SELECT 
+         database_name AS [Database],
+         MAX(bus.backup_finish_date) AS LastBackupTime,
+         CASE bus.type
+            WHEN 'D' THEN 'Full'
+            WHEN 'I' THEN 'Differential'
+            WHEN 'L' THEN 'Transaction Log'
+         END AS Type
+      FROM msdb.dbo.backupset bus
+      WHERE bus.type <> 'F'
+      GROUP BY bus.database_name,bus.type
+   ),
+   BackupsWithSize
+   AS(
+      SELECT mrb.*, (SELECT TOP 1 CONVERT(DECIMAL(10,4), b.backup_size/1024/1024/1024) AS backup_size FROM msdb.dbo.backupset b WHERE [Database] = b.database_name AND LastBackupTime = b.backup_finish_date) AS [Backup Size]
+      FROM MostRecentBackups mrb
+   )
+   
+   SELECT 
+      SERVERPROPERTY('ServerName') AS Instance, 
+      d.name AS [Database],
+      d.state_desc AS State,
+      d.recovery_model_desc AS [Recovery Model],
+      bf.LastBackupTime AS [Last Full],
+      DATEDIFF(DAY,bf.LastBackupTime,GETDATE()) AS [Time Since Last Full (in Days)],
+      bf.[Backup Size] AS [Full Backup Size],
+      bd.LastBackupTime AS [Last Differential],
+      DATEDIFF(DAY,bd.LastBackupTime,GETDATE()) AS [Time Since Last Differential (in Days)],
+      bd.[Backup Size] AS [Differential Backup Size],
+      bt.LastBackupTime AS [Last Transaction Log],
+      DATEDIFF(MINUTE,bt.LastBackupTime,GETDATE()) AS [Time Since Last Transaction Log (in Minutes)],
+      bt.[Backup Size] AS [Transaction Log Backup Size]
+   FROM sys.databases d
+   LEFT JOIN BackupsWithSize bf ON (d.name = bf.[Database] AND (bf.Type = 'Full' OR bf.Type IS NULL))
+   LEFT JOIN BackupsWithSize bd ON (d.name = bd.[Database] AND (bd.Type = 'Differential' OR bd.Type IS NULL))
+   LEFT JOIN BackupsWithSize bt ON (d.name = bt.[Database] AND (bt.Type = 'Transaction Log' OR bt.Type IS NULL))
+   WHERE d.name <> 'tempdb' AND d.source_database_id IS NULL
+
+
+.....................................................................................................................................................................................................
+Script to get CURRENTLY RUNNING JOBS ON YOUR SERVER 
+
+
+CREATE TABLE #enum_job
+
+  (
+
+    Job_ID uniqueidentifier,
+
+    Last_Run_Date         INT,
+
+    Last_Run_Time         INT,
+
+    Next_Run_Date         INT,
+
+    Next_Run_Time         INT,
+
+    Next_Run_Schedule_ID  INT,
+
+    Requested_To_Run      INT,
+
+    Request_Source        INT,
+
+    Request_Source_ID     VARCHAR(100),
+
+    Running               INT,
+
+    Current_Step          INT,
+
+    Current_Retry_Attempt INT,
+
+    State                 INT
+
+  )
+
+ 
+
+ 
+
+INSERT INTO
+
+  #enum_job EXEC master.dbo.xp_sqlagent_enum_jobs 1,  garbage
+
+ 
+
+ 
+
+SELECT
+
+  R.name AS [Job Name] ,
+
+  R.last_run_date AS [Last Run Date],
+
+  R.RunningForTime [Running Time],
+
+  GETDATE()AS [Current Time]
+
+FROM
+
+  #enum_job a
+
+INNER JOIN
+
+  (
+
+    SELECT
+
+      j.name,
+
+      J.JOB_ID,
+
+      ja.run_requested_date AS last_run_date,
+
+      (DATEDIFF(mi,ja.run_requested_date,GETDATE())) AS RunningFor,
+
+      CASE LEN(CONVERT(VARCHAR(5),DATEDIFF(MI,JA.RUN_REQUESTED_DATE,GETDATE())/60))
+
+        WHEN 1 THEN '0' + CONVERT(VARCHAR(5),DATEDIFF(mi,ja.run_requested_date,GETDATE())/60)
+
+        ELSE CONVERT(VARCHAR(5),DATEDIFF(mi,ja.run_requested_date,GETDATE())/60)
+
+      END 
+
+      + ':' +
+
+      CASE LEN(CONVERT(VARCHAR(5),(DATEDIFF(MI,JA.RUN_REQUESTED_DATE,GETDATE())%60)))
+
+        WHEN 1 THEN '0'+CONVERT(VARCHAR(5),(DATEDIFF(mi,ja.run_requested_date,GETDATE())%60))
+
+        ELSE CONVERT(VARCHAR(5),(DATEDIFF(mi,ja.run_requested_date,GETDATE())%60))
+
+      END 
+
+      + ':' +
+
+      CASE LEN(CONVERT(VARCHAR(5),(DATEDIFF(SS,JA.RUN_REQUESTED_DATE,GETDATE())%60)))
+
+        WHEN 1 THEN '0'+CONVERT(VARCHAR(5),(DATEDIFF(ss,ja.run_requested_date,GETDATE())%60))
+
+        ELSE CONVERT(VARCHAR(5),(DATEDIFF(ss,ja.run_requested_date,GETDATE())%60))
+
+      END AS RunningForTime
+
+    FROM
+
+      msdb.dbo.sysjobactivity AS ja
+
+    LEFT OUTER JOIN msdb.dbo.sysjobhistory AS jh
+
+    ON
+
+      ja.job_history_id = jh.instance_id
+
+    INNER JOIN msdb.dbo.sysjobs_view AS j
+
+    ON
+
+      ja.job_id = j.job_id
+
+    WHERE
+
+      (
+
+        ja.session_id =
+
+        (
+
+          SELECT
+
+            MAX(session_id) AS EXPR1
+
+          FROM
+
+            msdb.dbo.sysjobactivity
+
+        )
+
+      )
+
+  )
+
+  R ON R.job_id = a.Job_Id
+
+AND a.Running   = 1
+
+DROP TABLE #enum_job
+
+.....................................................................................................................................................................................................
+
+TSQL FOR BACK UP HISTRY 
+
+SELECT logical_name,physical_name,file_number,backup_size,file_type,*
+from dbo.backupfile ORDER BY 1
+
+...........................................................................................................................................................
+
+
+Scripit for Long Running query High CPU query, for frequently ran query
+
+SELECT TOP(50) qs.execution_count AS [Execution Count],
+(qs.total_logical_reads)/1000.0 AS [Total Logical Reads in ms],
+(qs.total_logical_reads/qs.execution_count)/1000.0 AS [Avg Logical Reads in ms],
+(qs.total_worker_time)/1000.0 AS [Total Worker Time in ms],
+(qs.total_worker_time/qs.execution_count)/1000.0 AS [Avg Worker Time in ms],
+(qs.total_elapsed_time)/1000.0 AS [Total Elapsed Time in ms],
+(qs.total_elapsed_time/qs.execution_count)/1000.0 AS [Avg Elapsed Time in ms],
+qs.creation_time AS [Creation Time]
+,t.text AS [Complete Query Text], qp.query_plan AS [Query Plan]
+FROM sys.dm_exec_query_stats AS qs WITH (NOLOCK)
+CROSS APPLY sys.dm_exec_sql_text(plan_handle) AS t
+CROSS APPLY sys.dm_exec_query_plan(plan_handle) AS qp
+WHERE t.dbid = DB_ID()
+--ORDER BY qs.execution_count DESC OPTION (RECOMPILE);-- for frequently ran query
+-- ORDER BY [Avg Logical Reads in ms] DESC OPTION (RECOMPILE);-- for High Disk Reading query
+-- ORDER BY [Avg Worker Time in ms] DESC OPTION (RECOMPILE);-- for High CPU query
+ --ORDER BY [Avg Elapsed Time in ms] DESC OPTION (RECOMPILE);-- for Long Running query
+
+.....................................................................................................................................................................................................
+
+Store procedure to shrink log file whenever the log file grows above 95% or even before 95%. Note the store procedure requires two 
+input variables (DBName, Log file name). All you need to do is to pass the two variables.
+
+CREATE PROCEDURE Logfileshrink
+(@DBName as varchar(255),@LogFileName as Varcar(255))
+AS
+BEGIN 7y
+EXEC ('USE '+@DBName+'
+   alter database '+@DBName+'
+   set recovery simple;
+
+----Shrink the truncated log file to 1 MB.
+
+  DBCC SHRINKFILE('+@LogFile+', 1);
+   alter Database '+@DBName+'
+    set recovery full;
+)
+END
+
+
+............................................................................................................................................................
+
+Scripit to see the logfile space 
+
+USE master
+GO
+SELECT DISTINCT p.name AS [loginname] ,
+p.type ,
+p.type_desc ,
+p.is_disabled,
+s.sysadmin,
+CONVERT(VARCHAR(10),p.create_date ,101) AS [created],
+CONVERT(VARCHAR(10),p.modify_date , 101) AS [update]
+FROM sys.server_principals p
+JOIN sys.syslogins s ON p.sid = s.sid
+JOIN sys.server_permissions sp ON p.principal_id = sp.grantee_principal_id
+WHERE p.type_desc IN ('SQL_LOGIN', 'WINDOWS_LOGIN', 'WINDOWS_GROUP')
+-- Logins that are not process logins
+AND p.name NOT LIKE '##%'
+-- Logins that are sysadmins or have GRANT CONTROL SERVER
+AND (s.sysadmin = 1 OR sp.permission_name = 'CONTROL SERVER')
+ORDER BY p.name
+GO
+
+............................................................................................................................................................
+
+Scripit to check all the sys adim on the server 
+
+USE master
+GO
+SELECT DISTINCT p.name AS [loginname] ,
+p.type ,
+p.type_desc ,
+p.is_disabled,
+s.sysadmin,
+CONVERT(VARCHAR(10),p.create_date ,101) AS [created],
+CONVERT(VARCHAR(10),p.modify_date , 101) AS [update]
+FROM sys.server_principals p
+JOIN sys.syslogins s ON p.sid = s.sid
+JOIN sys.server_permissions sp ON p.principal_id = sp.grantee_principal_id
+WHERE p.type_desc IN ('SQL_LOGIN', 'WINDOWS_LOGIN', 'WINDOWS_GROUP')
+-- Logins that are not process logins
+AND p.name NOT LIKE '##%'
+-- Logins that are sysadmins or have GRANT CONTROL SERVER
+AND (s.sysadmin = 1 OR sp.permission_name = 'CONTROL SERVER')
+ORDER BY p.name
+GO
+
+
+
+
+
+
+
+sys.dm_db_missing_index_details
+SELECT mig.*, statement AS table_name, column_id, column_name, column_usage
+FROM sys.dm_db_missing_index_details AS mid
+CROSS APPLY sys.dm_db_missing_index_columns (mid.index_handle)
+INNER JOIN sys.dm_db_missing_index_groups AS mig ON mig.index_handle = mid.index_handle
+ORDER BY mig.index_group_handle, mig.index_handle, column_id;
+msdb.dbo.sysjobs
+
+
+msdb.dbo.sysjobs
+
+
+sys.dm_db_missing_index_details
+
+
+SELECT TOP 25
+dm_mid.database_id AS DatabaseID,
+dm_migs.avg_user_impact*(dm_migs.user_seeks+dm_migs.user_scans) Avg_Estimated_Impact,
+dm_migs.last_user_seek AS Last_User_Seek,
+OBJECT_NAME(dm_mid.OBJECT_ID,dm_mid.database_id) AS [TableName],
+'CREATE INDEX [IX_' + OBJECT_NAME(dm_mid.OBJECT_ID,dm_mid.database_id) + '_'
++ REPLACE(REPLACE(REPLACE(ISNULL(dm_mid.equality_columns,''),', ','_'),'[',''),']','') 
++ CASE
+WHEN dm_mid.equality_columns IS NOT NULL
+AND dm_mid.inequality_columns IS NOT NULL THEN '_'
+ELSE ''
+END
++ REPLACE(REPLACE(REPLACE(ISNULL(dm_mid.inequality_columns,''),', ','_'),'[',''),']','')
++ ']'
++ ' ON ' + dm_mid.statement
++ ' (' + ISNULL (dm_mid.equality_columns,'')
++ CASE WHEN dm_mid.equality_columns IS NOT NULL AND dm_mid.inequality_columns 
+IS NOT NULL THEN ',' ELSE
+'' END
++ ISNULL (dm_mid.inequality_columns, '')
++ ')'
++ ISNULL (' INCLUDE (' + dm_mid.included_columns + ')', '') AS Create_Statement
+FROM sys.dm_db_missing_index_groups dm_mig
+INNER JOIN sys.dm_db_missing_index_group_stats dm_migs
+ON
+
+............................................................................................................................................................
+
+Scripit tsql for for waits report
+
+SELECT
+owt.session_id,
+owt.exec_context_id,
+owt.wait_duration_ms,
+owt.wait_type,
+owt.blocking_session_id,
+owt.resource_description,
+est.text,
+es.program_name,
+eqp.query_plan,
+es.cpu_time,
+es.memory_usage
+FROM
+sys.dm_os_waiting_tasks owt
+INNER JOIN sys.dm_exec_sessions es ON 
+owt.session_id = es.session_id
+INNER JOIN sys.dm_exec_requests er
+ON es.session_id = er.session_id
+OUTER APPLY sys.dm_exec_sql_text (er.sql_handle) est
+OUTER APPLY sys.dm_exec_query_plan (er.plan_handle) eqp
+WHERE es.is_user_process = 1
+ORDER BY owt.session_id, owt.exec_context_id
+............................................................................................................................................................
+
+SQL to get specifige database u have to put the database name on the scrpt 
+
+
+SELECT TOP 100
+s.database_name,
+m.physical_device_name,
+CAST(CAST(s.backup_size / 1000000 AS INT) AS VARCHAR(14)) + ' ' + 'MB' AS bkSize,
+CAST(DATEDIFF(second, s.backup_start_date,
+s.backup_finish_date) as VARCHAR(4)) + ' ' + 'Seconds' TimeTaken,
+s.backup_start_date,
+CAST(s.first_lsn AS VARCHAR(50)) AS first_lsn,
+CAST(s.last_lsn AS VARCHAR(50)) AS last_lsn,
+CASE s.[type]
+WHEN 'D' THEN 'Full'
+WHEN 'I' THEN 'Differential'
+WHEN 'L' THEN 'Transaction Log'
+END AS BackupType,
+s.server_name,
+s.recovery_model
+FROM msdb.dbo.backupset s
+INNER JOIN msdb.dbo.backupmediafamily m ON s.media_set_id = m.media_set_id
+WHERE (s.[type]='D' or s.[type]='I' or s.[type]='L')
+and s.database_name = 'CTDW'
+ORDER BY backup_start_date DESC, backup_finish_date
+............................................................................................................................................................
+
+TSQL TO KNOW WHY YOUR LOG FILLE IS NOT TRUCATED 
+
+select log_reuse_wait_desc,* from sys.databases
+
+...........................................................................................................................................................
+
+https://docs.microsoft.com/en-us/troubleshoot/sql/performance/troubleshoot-high-cpu-usage-issues
+
+ TSQL TO SHow you high cpu queries
+
+SELECT TOP 10 s.session_id,
+           r.status,
+           r.cpu_time,
+           r.logical_reads,
+           r.reads,
+           r.writes,
+           r.total_elapsed_time / (1000 * 60) 'Elaps M',
+           SUBSTRING(st.TEXT, (r.statement_start_offset / 2) + 1,
+           ((CASE r.statement_end_offset
+                WHEN -1 THEN DATALENGTH(st.TEXT)
+                ELSE r.statement_end_offset
+            END - r.statement_start_offset) / 2) + 1) AS statement_text,
+           COALESCE(QUOTENAME(DB_NAME(st.dbid)) + N'.' + QUOTENAME(OBJECT_SCHEMA_NAME(st.objectid, st.dbid)) 
+           + N'.' + QUOTENAME(OBJECT_NAME(st.objectid, st.dbid)), '') AS command_text,
+           r.command,
+           s.login_name,
+           s.host_name,
+           s.program_name,
+           s.last_request_end_time,
+           s.login_time,
+           r.open_transaction_count
+FROM sys.dm_exec_sessions AS s
+JOIN sys.dm_exec_requests AS r ON r.session_id = s.session_id CROSS APPLY sys.Dm_exec_sql_text(r.sql_handle) AS st
+WHERE r.session_id != @@SPID
+ORDER BY r.cpu_time DESC
+
+...........................................................................................................................................................
+
+script to increase temp db size
+
+ALTER DATABASE tempdb MODIFY FILE (NAME = 'templog', SIZE = NEW_SIZE_MB)
+
+...........................................................................................................................................................
+
+This is for shirink
+
+ALTER DATABASE tempdb MODIFY FILE (NAME = 'tempdev', SIZE = NEW_SIZE_MB)
+
+
+
+
+SELECT S.name as 'Schema',
+T.name as 'Table',
+I.name as 'Index',
+DDIPS.avg_fragmentation_in_percent,
+DDIPS.page_count
+FROM sys.dm_db_index_physical_stats (DB_ID(), NULL, NULL, NULL, NULL) AS DDIPS
+INNER JOIN sys.tables T on T.object_id = DDIPS.object_id
+INNER JOIN sys.schemas S on T.schema_id = S.schema_id
+INNER JOIN sys.indexes I ON I.object_id = DDIPS.object_id
+AND DDIPS.index_id = I.index_id
+WHERE DDIPS.database_id = DB_ID()
+and I.name is not null
+AND DDIPS.avg_fragmentation_in_percent > 0
+ORDER BY DDIPS.avg_fragmentation_in_percent desc
+
+ALTER INDEX ALL ON dbo.SOP10105
+REORGANIZE ;
+GO
+
+ALTER INDEX AK4PM30200
+ON dbo.PM30200
+REORGANIZE ;
+GO
+
+
+...........................................................................................................................................................
+SELECT
+ [avg_fragmentation_in_percent]
+FROM sys.dm_db_index_physical_stats (
+ DB_ID (N'ShrinkDB'), OBJECT_ID (N'second'), 1, NULL, 'LIMITED');
+G
+
+...........................................................................................................................................................
+
+
+TSQL TO CHECK index fragmentation levle 
+
+SELECT OBJECT_NAME(ips.OBJECT_ID)
+ ,i.NAME
+ ,ips.index_id
+ ,index_type_desc
+ ,avg_fragmentation_in_percent
+ ,avg_page_space_used_in_percent
+ ,page_count
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
+INNER JOIN sys.indexes i ON (ips.object_id = i.object_id)
+ AND (ips.index_id = i.index_id)
+ORDER BY avg_fragmentation_in_percent DESC
+
+..........................................................................................................................................................
+...................................................................................................
+
+Tsql to know the % of backup to complete 
+
+USE msdb
+GO
+SELECT r.session_id,r.command,CONVERT(NUMERIC(6,2),r.percent_complete)
+AS [Percent Complete],
+CONVERT(VARCHAR(20),DATEADD(ms,r.estimated_completion_time,GetDate()),20) AS [ETA Completion Time],
+CONVERT(NUMERIC(10,2),r.total_elapsed_time/1000.0/60.0) AS [Elapsed Min],
+CONVERT(NUMERIC(10,2),
+r.estimated_completion_time/1000.0/60.0) AS [ETA Min],
+CONVERT(NUMERIC(10,2),
+r.estimated_completion_time/1000.0/60.0/60.0) AS [ETA Hours],
+CONVERT(VARCHAR(1000),
+(SELECT SUBSTRING(text,r.statement_start_offset/2,
+CASE
+WHEN r.statement_end_offset = -1 THEN 1000
+ELSE (r.statement_end_offset-r.statement_start_offset)/2 END)
+FROM sys.dm_exec_sql_text(sql_handle)))
+FROM sys.dm_exec_requests r WHERE command IN ('RESTORE DATABASE','BACKUP DATABASE', 'BACKUP LOG', 'RESTORE LOG');
+
+
+
+
+select local_database_name
+, remote_machine_name,role_desc ,internal_state_desc
+,transfer_rate_bytes_per_second/1024/1024 as transfer_rate_MB_per_second ,transferred_size_bytes/1024/1024 as transferred_size_MB
+,database_size_bytes/1024/1024/1024/1024 as Database_Size_TB,
+is_compression_enabled     from sys.dm_hadr_physical_seeding_stats
+
+......................................................................................................................................................................................................................................................................................................................
+
+
+TSQL TO REMOVE TEMPDB FILE JUST PUT THE NUMBER AT THE END OF THE TEMPDB
+
+USE [tempdb]
+GO
+ALTER DATABASE [tempdb] REMOVE FILE [temp8]
+GO
+
+
+...........................................................................................................................................................
+...........................................................................................................................................................
+
+—This query is very useful for performance troubleshooting , it’s shows last 50 queries than is running or ran with cpu usage and execution plan with a lot of information
+
+
+SELECT TOP(50) DB_NAME(t.[dbid]) AS [Database Name],
+REPLACE(REPLACE(LEFT(t.[text], 255), CHAR(10),''), CHAR(13),'') AS [Short Query Text],  qs.last_execution_time,qs.last_elapsed_time,
+qs.total_worker_time AS [Total Worker Time], qs.min_worker_time AS [Min Worker Time],
+qs.total_worker_time/qs.execution_count AS [Avg Worker Time],
+qs.max_worker_time AS [Max Worker Time],
+qs.min_elapsed_time AS [Min Elapsed Time],
+qs.total_elapsed_time/qs.execution_count AS [Avg Elapsed Time],
+qs.max_elapsed_time AS [Max Elapsed Time],
+qs.min_logical_reads AS [Min Logical Reads],
+qs.total_logical_reads/qs.execution_count AS [Avg Logical Reads],
+qs.max_logical_reads AS [Max Logical Reads],
+qs.execution_count AS [Execution Count],        qp.[query_plan].value('(//@EstimateRows)[1]', 'varchar(128)')AS [estimated_rows],
+        qs.[last_rows]
+,abs(cast(qp.[query_plan].value('(//@EstimateRows)[1]', 'varchar(128)') as float) - qs.[last_rows] ) Diff,
+CASE WHEN CONVERT(nvarchar(max), qp.query_plan) LIKE N'%<MissingIndexes>%' THEN 1 ELSE 0 END AS [Has Missing Index],
+qs.creation_time AS [Creation Time]
+,t.[text] AS [Query Text], qp.query_plan AS [Query Plan] -- uncomment out these columns if not copying results to Excel
+FROM sys.dm_exec_query_stats AS qs WITH (NOLOCK)
+CROSS APPLY sys.dm_exec_sql_text(plan_handle) AS t
+CROSS APPLY sys.dm_exec_query_plan(plan_handle) AS qp --where t.[text] like '%UnitOfWork%'
+ORDER BY qs.total_worker_time DESC OPTION (RECOMPILE);
+
+
+...........................................................................................................................................................
+TSQL TO KNOW MEMORY GRANT
+
+
+SELECT object_name, counter_name, cntr_value
+FROM sys.dm_os_performance_counters
+WHERE [object_name] LIKE '%Memory Manager%'
+AND [counter_name] = 'Memory Grants Pending'
+
+...........................................................................................................................................................
+
+TSQL entry in index ID 1, of table 750559845
+
+SELECT OBJECT_NAME (363535);
+
+
+TSSv2.ps1
+
+.\TSSv2.ps1 -SDP SQLbase -noPSR -AcceptEula
+
+aka.ms/getTSSv2
+
+
+DBCC OPENTRAN
+
+GO
+DBCC FREEPROCCACHE
+GO
+DBCC SHRINKFILE (tempdev, 512)
+GO
+CHECKPOINT
+GO
+DBCC FREEPROCCACHE
+GO
+DBCC SHRINKFILE (TEMPDEV, 1024)
+GO
+DBCC Opentran
+
+sp_who2 active
+
+SELECT  *
+FROM    sys.dm_exec_requests  
+        CROSS APPLY sys.dm_exec_sql_text(sql_handle)
+
+		SELECT OBJECT_NAME(object_id) AS [ObjectName]
+      ,[name] AS [StatisticName]
+      ,STATS_DATE([object_id], [stats_id]) AS [StatisticUpdateDate]
+FROM sys.stats;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
