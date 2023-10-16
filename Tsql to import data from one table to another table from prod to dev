@@ -1,0 +1,4 @@
+USE DB;
+INSERT INTO [MMS_Integration].[dbo].[mms_product_vendor]
+SELECT * FROM [SQLAPP\APP].[MMS_Integration].[dbo].[mms_product_vendor];
+GO
