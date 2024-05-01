@@ -1,0 +1,117 @@
+
+/*
+
+Use [TempDB]
+go
+CHECKPOINT;
+GO
+DBCC DROPCLEANBUFFERS;
+GO
+DBCC FREEPROCCACHE;
+GO
+DBCC FREESESSIONCACHE;
+GO
+DBCC SHRINKFILE (TEMPDEV, 1024);   --- New file size in MB
+GO
+*/
+
+/*
+
+-- Run this against HPDBA.DBA database to find the year high, low and average sizes
+
+select a.* from dbo.HPPTempDatabaseInfo a
+where a.ServerName = 'HPHRDWSQLPP,6001'
+and a.FileTypeDesc = 'rows'
+order by a.TimeCollected desc
+
+
+
+select 
+min(cast(a.CurrentSizeMB as int)) as mini,
+max(cast(a.CurrentSizeMB as int)) as maxi,
+avg(cast(a.CurrentSizeMB as int)) as avi
+from dbo.HPPTempDatabaseInfo a
+where a.ServerName = 'HPHRDWSQLPP,6001'
+and a.FileTypeDesc = 'log'
+
+*/
+
+
+
+-- configured size
+SELECT 
+name, file_id, type_desc, size * 8.0 / 1024.0 as [TempdbSizeInMB]
+FROM sys.master_files
+WHERE DB_NAME(database_id) = 'tempdb'
+ORDER BY type_desc DESC, file_id 
+GO
+/*
+*/
+
+
+-- current size
+SELECT 
+name, file_id, type_desc, size * 8 / 1024 [TempdbSizeInMB]
+FROM tempdb.sys.database_files 
+ORDER BY type_desc DESC, file_id
+GO
+
+/*
+*/
+
+
+
+/*
+-- Shrink the files. Change to desired size
+USE TEMPDB
+GO
+CHECKPOINT;
+GO
+CHECKPOINT; -- run twice to ensure file wrap-around
+GO
+
+DBCC SHRINKFILE(tempdev, 5120);
+DBCC SHRINKFILE(temp2	, 5120);
+DBCC SHRINKFILE(temp3	, 5120);
+DBCC SHRINKFILE(temp4	, 5120);
+DBCC SHRINKFILE(temp5	, 5120);
+DBCC SHRINKFILE(temp6	, 5120);
+DBCC SHRINKFILE(temp7	, 5120);
+DBCC SHRINKFILE(temp8	, 5120);
+DBCC SHRINKFILE(templog , 2048);
+*/
+
+
+
+/*
+
+-- Generate the alter DB statements
+USE [DBA]
+GO
+
+DECLARE @RC int
+DECLARE @param_LogFileSizeMB int
+DECLARE @param_DataFileSizeMB int
+
+-- TODO: Set parameter values here.
+set @param_LogFileSizeMB    = 2048
+set @param_DataFileSizeMB   = 5120
+
+EXECUTE @RC = [dbo].[prc_GenerateTempDBAlterFileSizeCmdsLocal] 
+   @param_LogFileSizeMB
+  ,@param_DataFileSizeMB
+GO
+
+
+-- Update the configured size so the files will be correct upon restart of sql.
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = templog,    SIZE=2048MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp2,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp3,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp4,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp5,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp6,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp7,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = temp8,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+USE MASTER; ALTER DATABASE tempdb MODIFY FILE (NAME = tempdev,    SIZE=5120MB); /* HPHRDWSQLPP01 */; 
+
+*/
