@@ -1,0 +1,605 @@
+print 'Returning for stafety!'
+Return
+
+-- ==================================================================================
+-- 00) Verify drive space (all drives)
+-- ==================================================================================
+
+SELECT DISTINCT 
+vs.volume_mount_point AS DRV,
+vs.logical_volume_name AS volLabel, 
+CONVERT(DECIMAL(18,2), vs.total_bytes/1073741824.0) AS [Total Size (GB)],
+CONVERT(DECIMAL(18,2), vs.available_bytes/1073741824.0) AS [Available Size (GB)],  
+CONVERT(DECIMAL(18,2), vs.available_bytes * 1. / vs.total_bytes * 100.) AS [Space Free %]
+FROM sys.master_files AS f WITH (NOLOCK)
+CROSS APPLY sys.dm_os_volume_stats(f.database_id, f.[file_id]) AS vs 
+ORDER BY vs.volume_mount_point OPTION (RECOMPILE);
+
+
+-- ==================================================================================
+-- 01) Verify space exists to move .BAK file to server.
+-- ==================================================================================
+
+
+-- Note: Verify there is also enough space to copy the .BAK file locally AND be able 
+--		to restore the DB with the .BAK file on the server.
+/*
+-- 02) Script out the files and file space info
+
+
+-- Shows files with used, free and total space used
+SELECT 
+	cast(getdate() as date) as DatePolled,
+	@@SERVERNAME as ServerName,
+	DB_NAME() AS DbName, 
+	dbf.name AS FileName,
+	dbf.physical_name,
+	dbf.type_desc,
+	dbf.size/128.0 - CAST(FILEPROPERTY(dbf.name, 'SpaceUsed') AS INT) / 128.0 AS FreeSpaceMB,
+	CAST(FILEPROPERTY(dbf.name, 'SpaceUsed') AS INT) / 128.0 AS UsedSpaceMB,
+	dbf.size / 128.0 AS TotalSizeMB
+FROM master.sys.database_files dbf 
+order by 1, 2, 3, 4, 5
+
+
+DECLARE @DBname sysname
+SET @DBname = 'X'
+SELECT 
+	@@SERVERNAME as SERVERNAME, 
+	d.name as DBName, 
+	m.NAME as LogicalFileName, 
+	m.physical_name,
+	m.type_desc,
+	size/128 SizeMB
+FROM master.sys.master_files m inner join master.sys.databases d on m.database_id = d.database_id
+WHERE d.name in (@DBname)
+order by 1, 2, 3, 4, 5, 6
+
+*/
+
+-- ==================================================================================
+-- 03) Script the existing users on the target DB
+-- ==================================================================================
+/*
+
+a) Run this script and past output here (preferred option)
+
+*/
+
+
+SET NOCOUNT ON
+
+
+PRINT '-- Script Executed against ' + @@servername + '.' + DB_NAME() + ' logged in as ' + system_user
+PRINT '-- Executed on ' + convert(varchar(50), getdate(), 109)
+
+if NOT ( (@@servername = 'XXXX') and ( DB_NAME() = 'XXXX' )) begin print 'you are executing against wrong server/db. exiting with no action taken';return; end else begin print '-- executing script...' end 
+
+
+/*Prep statements*/
+IF OBJECT_ID('tempdb..##tbl_db_principals_statements') IS NOT NULL DROP TABLE ##tbl_db_principals_statements 
+CREATE TABLE ##tbl_db_principals_statements (stmt varchar(max), result_order decimal(4,1))
+IF ((SELECT SUBSTRING(convert(sysname, SERVERPROPERTY('productversion')), 1, charindex('.',convert(sysname, SERVERPROPERTY('productversion')))-1)) > 10)
+EXEC ('
+INSERT INTO ##tbl_db_principals_statements (stmt, result_order)
+   SELECT   
+      CASE WHEN rm.authentication_type IN (2, 0) /* 2=contained database user with password, 0 =user without login; create users without logins*/ THEN (''IF NOT EXISTS (SELECT [name] FROM sys.database_principals WHERE [name] = '' + SPACE(1) + '''''''' + [name] + '''''''' + '') BEGIN CREATE USER '' + SPACE(1) + QUOTENAME([name]) + '' WITHOUT LOGIN WITH DEFAULT_SCHEMA = '' + QUOTENAME([default_schema_name]) + SPACE(1) + '', SID = '' + CONVERT(varchar(1000), sid, 1) + SPACE(1) + '' END; '')
+         ELSE (''IF NOT EXISTS (SELECT [name] FROM sys.database_principals WHERE [name] = '' + SPACE(1) + '''''''' + [name] + '''''''' + '') BEGIN CREATE USER '' + SPACE(1) + QUOTENAME([name]) + '' FOR LOGIN '' + QUOTENAME(suser_sname([sid])) + CASE WHEN [type] <>''G'' THEN '' WITH DEFAULT_SCHEMA = '' + QUOTENAME(ISNULL([default_schema_name], ''dbo'')) ELSE '''' END + SPACE(1) + ''END; '') 
+         END AS [-- SQL STATEMENTS --],
+         3.1 AS [-- RESULT ORDER HOLDER --]
+   FROM   sys.database_principals AS rm
+   WHERE [type] IN (''U'', ''S'', ''G'') /* windows users, sql users, windows groups */
+     AND NAME <> ''guest''')
+
+ELSE IF ((SELECT SUBSTRING(convert(sysname, SERVERPROPERTY('productversion')), 1, charindex('.',convert(sysname, SERVERPROPERTY('productversion')))-1)) IN (9,10))
+EXEC ('
+INSERT INTO ##tbl_db_principals_statements (stmt, result_order)
+   SELECT   (''IF NOT EXISTS (SELECT [name] FROM sys.database_principals WHERE [name] = '' + SPACE(1) + '''''''' + [name] + '''''''' + '') BEGIN CREATE USER '' + SPACE(1) + QUOTENAME([name]) + '' FOR LOGIN '' + QUOTENAME(suser_sname([sid])) + CASE WHEN [type] <>''G'' THEN '' WITH DEFAULT_SCHEMA = '' + QUOTENAME(ISNULL([default_schema_name], ''dbo'')) ELSE '''' END + SPACE(1) + ''END; '') AS [-- SQL STATEMENTS --],
+         3.1 AS [-- RESULT ORDER HOLDER --]
+   FROM   sys.database_principals AS rm
+   WHERE [type] IN (''U'', ''S'', ''G'') /* windows users, sql users, windows groups */
+   AND NAME <> ''guest''')
+
+--SELECT * FROM ##tbl_db_principals_statements
+
+
+
+
+DECLARE 
+    @sql VARCHAR(2048)
+    ,@sort INT 
+
+DECLARE tmp CURSOR FOR
+
+
+/*********************************************/
+/*********   DB CONTEXT STATEMENT    *********/
+/*********************************************/
+SELECT '-- [-- DB CONTEXT --] --' AS [-- SQL STATEMENTS --],
+      1 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT   'USE' + SPACE(1) + QUOTENAME(DB_NAME()) AS [-- SQL STATEMENTS --],
+      1.1 AS [-- RESULT ORDER HOLDER --]
+
+UNION
+
+SELECT '' AS [-- SQL STATEMENTS --],
+      2 AS [-- RESULT ORDER HOLDER --]
+
+UNION
+
+/*********************************************/
+/*********     DB USER CREATION      *********/
+/*********************************************/
+
+   SELECT '-- [-- DB USERS --] --' AS [-- SQL STATEMENTS --],
+         3 AS [-- RESULT ORDER HOLDER --]
+   UNION
+
+   SELECT   
+      [stmt],
+         3.1 AS [-- RESULT ORDER HOLDER --]
+   FROM   ##tbl_db_principals_statements
+   --WHERE [type] IN ('U', 'S', 'G') -- windows users, sql users, windows groups
+   WHERE [stmt] IS NOT NULL
+
+UNION
+
+/*********************************************/
+/*********    MAP ORPHANED USERS     *********/
+/*********************************************/
+
+SELECT '-- [-- ORPHANED USERS --] --' AS [-- SQL STATEMENTS --],
+      4 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT   'ALTER USER [' + rm.name + '] WITH LOGIN = [' + rm.name + ']',
+      4.1 AS [-- RESULT ORDER HOLDER --]
+FROM   sys.database_principals AS rm
+ Inner JOIN sys.server_principals as sp
+ ON rm.name = sp.name COLLATE DATABASE_DEFAULT and rm.sid <> sp.sid
+WHERE rm.[type] IN ('U', 'S', 'G') -- windows users, sql users, windows groups
+ AND rm.name NOT IN ('dbo', 'guest', 'INFORMATION_SCHEMA', 'sys', 'MS_DataCollectorInternalUser')
+
+UNION
+
+/*********************************************/
+/*********    DB ROLE PERMISSIONS    *********/
+/*********************************************/
+SELECT '-- [-- DB ROLES --] --' AS [-- SQL STATEMENTS --],
+      5 AS [-- RESULT ORDER HOLDER --]
+UNION
+
+SELECT   'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME([name],'''') COLLATE database_default + ') IS NULL' + SPACE(1) + 'CREATE ROLE'
+   + SPACE(1) + QUOTENAME([name]),
+      5.1 AS [-- RESULT ORDER HOLDER --]
+FROM sys.database_principals
+WHERE [type] ='R' -- R = Role
+   AND [is_fixed_role] = 0
+--ORDER BY [name] ASC
+UNION
+
+SELECT   'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME(USER_NAME(rm.member_principal_id),'''') COLLATE database_default + ') IS NOT NULL' + SPACE(1) + 'EXEC sp_addrolemember @rolename ='
+   + SPACE(1) + QUOTENAME(USER_NAME(rm.role_principal_id), '''') COLLATE database_default + ', @membername =' + SPACE(1) + QUOTENAME(USER_NAME(rm.member_principal_id), '''') COLLATE database_default AS [-- SQL STATEMENTS --],
+      5.2 AS [-- RESULT ORDER HOLDER --]
+FROM   sys.database_role_members AS rm
+WHERE   USER_NAME(rm.member_principal_id) IN (   
+                                    --get user names on the database
+                                    SELECT [name]
+                                    FROM sys.database_principals
+                                    WHERE [principal_id] > 4 -- 0 to 4 are system users/schemas
+                                    and [type] IN ('G', 'S', 'U') -- S = SQL user, U = Windows user, G = Windows group
+                                   )
+--ORDER BY rm.role_principal_id ASC
+
+
+UNION
+
+SELECT '' AS [-- SQL STATEMENTS --],
+      7 AS [-- RESULT ORDER HOLDER --]
+
+UNION
+
+/*********************************************/
+/*********  OBJECT LEVEL PERMISSIONS *********/
+/*********************************************/
+SELECT '-- [-- OBJECT LEVEL PERMISSIONS --] --' AS [-- SQL STATEMENTS --],
+      7.1 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT   'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME(USER_NAME(usr.principal_id),'''') COLLATE database_default + ') IS NOT NULL' + SPACE(1) +
+      CASE 
+         WHEN perm.state <> 'W' THEN perm.state_desc 
+         ELSE 'GRANT'
+      END
+      + SPACE(1) + perm.permission_name + SPACE(1) + 'ON ' + QUOTENAME(OBJECT_SCHEMA_NAME(perm.major_id)) + '.' + QUOTENAME(OBJECT_NAME(perm.major_id)) --select, execute, etc on specific objects
+      + CASE
+            WHEN cl.column_id IS NULL THEN SPACE(0)
+            ELSE '(' + QUOTENAME(cl.name) + ')'
+        END
+      + SPACE(1) + 'TO' + SPACE(1) + QUOTENAME(USER_NAME(usr.principal_id)) COLLATE database_default
+      + CASE 
+            WHEN perm.state <> 'W' THEN SPACE(0)
+            ELSE SPACE(1) + 'WITH GRANT OPTION'
+        END
+         AS [-- SQL STATEMENTS --],
+      7.2 AS [-- RESULT ORDER HOLDER --]
+FROM   
+   sys.database_permissions AS perm
+
+   /* No join to sys.objects as it excludes system objects such as extended stored procedures */
+   /*   INNER JOIN
+   sys.objects AS obj
+         ON perm.major_id = obj.[object_id]
+   */
+      INNER JOIN
+   sys.database_principals AS usr
+         ON perm.grantee_principal_id = usr.principal_id
+      LEFT JOIN
+   sys.columns AS cl
+         ON cl.column_id = perm.minor_id AND cl.[object_id] = perm.major_id
+  WHERE /* Include System objects when scripting permissions for master, exclude elsewhere */
+      (    DB_NAME() <> 'master' AND perm.major_id IN (SELECT [object_id] FROM sys.objects WHERE type NOT IN ('S'))
+        OR DB_NAME() =  'master'
+        ) 
+                      
+      
+         
+--WHERE   usr.name = @OldUser
+--ORDER BY perm.permission_name ASC, perm.state_desc ASC
+
+
+UNION
+
+/*********************************************/
+/*********  TYPE LEVEL PERMISSIONS *********/
+/*********************************************/
+SELECT '-- [-- TYPE LEVEL PERMISSIONS --] --' AS [-- SQL STATEMENTS --],
+        8 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT  'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME(USER_NAME(usr.principal_id),'''') COLLATE database_default + ') IS NOT NULL' + SPACE(1) +
+      CASE 
+            WHEN perm.state <> 'W' THEN perm.state_desc 
+            ELSE 'GRANT'
+        END
+        + SPACE(1) + perm.permission_name + SPACE(1) + 'ON ' + QUOTENAME(SCHEMA_NAME(tp.schema_id)) + '.' + QUOTENAME(tp.name) --select, execute, etc on specific objects
+        + SPACE(1) + 'TO' + SPACE(1) + QUOTENAME(USER_NAME(usr.principal_id)) COLLATE database_default
+        + CASE 
+                WHEN perm.state <> 'W' THEN SPACE(0)
+                ELSE SPACE(1) + 'WITH GRANT OPTION'
+          END
+            AS [-- SQL STATEMENTS --],
+        8.1 AS [-- RESULT ORDER HOLDER --]
+FROM    
+    sys.database_permissions AS perm
+        INNER JOIN
+    sys.types AS tp
+            ON perm.major_id = tp.user_type_id
+        INNER JOIN
+    sys.database_principals AS usr
+            ON perm.grantee_principal_id = usr.principal_id
+
+
+UNION
+
+SELECT '' AS [-- SQL STATEMENTS --],
+   9 AS [-- RESULT ORDER HOLDER --]
+
+UNION
+
+/*********************************************/
+/*********    DB LEVEL PERMISSIONS   *********/
+/*********************************************/
+SELECT '-- [--DB LEVEL PERMISSIONS --] --' AS [-- SQL STATEMENTS --],
+      10 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT   'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME(USER_NAME(usr.principal_id),'''') COLLATE database_default + ') IS NOT NULL' + SPACE(1) +
+      CASE 
+         WHEN perm.state <> 'W' THEN perm.state_desc --W=Grant With Grant Option
+         ELSE 'GRANT'
+      END
+   + SPACE(1) + perm.permission_name --CONNECT, etc
+   + SPACE(1) + 'TO' + SPACE(1) + '[' + USER_NAME(usr.principal_id) + ']' COLLATE database_default --TO <user name>
+   + CASE 
+         WHEN perm.state <> 'W' THEN SPACE(0) 
+         ELSE SPACE(1) + 'WITH GRANT OPTION' 
+     END
+      AS [-- SQL STATEMENTS --],
+      10.1 AS [-- RESULT ORDER HOLDER --]
+FROM   sys.database_permissions AS perm
+   INNER JOIN
+   sys.database_principals AS usr
+   ON perm.grantee_principal_id = usr.principal_id
+--WHERE   usr.name = @OldUser
+
+WHERE   [perm].[major_id] = 0
+   AND [usr].[principal_id] > 4 -- 0 to 4 are system users/schemas
+   AND [usr].[type] IN ('G', 'S', 'U') -- S = SQL user, U = Windows user, G = Windows group
+
+UNION
+
+SELECT '' AS [-- SQL STATEMENTS --],
+      11 AS [-- RESULT ORDER HOLDER --]
+
+UNION 
+
+SELECT '-- [--DB LEVEL SCHEMA PERMISSIONS --] --' AS [-- SQL STATEMENTS --],
+      12 AS [-- RESULT ORDER HOLDER --]
+UNION
+SELECT   'IF DATABASE_PRINCIPAL_ID(' + QUOTENAME(USER_NAME(grantee_principal_id),'''') COLLATE database_default + ') IS NOT NULL' + SPACE(1) +
+         CASE
+         WHEN perm.state <> 'W' THEN perm.state_desc --W=Grant With Grant Option
+         ELSE 'GRANT'
+         END
+            + SPACE(1) + perm.permission_name --CONNECT, etc
+            + SPACE(1) + 'ON' + SPACE(1) + class_desc + '::' COLLATE database_default --TO <user name>
+            + QUOTENAME(SCHEMA_NAME(major_id))
+            + SPACE(1) + 'TO' + SPACE(1) + QUOTENAME(USER_NAME(grantee_principal_id)) COLLATE database_default
+            + CASE
+               WHEN perm.state <> 'W' THEN SPACE(0)
+               ELSE SPACE(1) + 'WITH GRANT OPTION'
+               END
+         AS [-- SQL STATEMENTS --],
+      12.1 AS [-- RESULT ORDER HOLDER --]
+from sys.database_permissions AS perm
+   inner join sys.schemas s
+      on perm.major_id = s.schema_id
+   inner join sys.database_principals dbprin
+      on perm.grantee_principal_id = dbprin.principal_id
+WHERE class = 3 --class 3 = schema
+
+ORDER BY [-- RESULT ORDER HOLDER --]
+
+
+OPEN tmp
+FETCH NEXT FROM tmp INTO @sql, @sort
+WHILE @@FETCH_STATUS = 0
+BEGIN
+        PRINT @sql
+        FETCH NEXT FROM tmp INTO @sql, @sort    
+END
+
+CLOSE tmp
+DEALLOCATE tmp 
+
+
+IF OBJECT_ID('tempdb..##tbl_db_principals_statements') IS NOT NULL DROP TABLE ##tbl_db_principals_statements 
+print 'go' + char(13)
+
+
+-- This is the old way
+--PRINT'--list of users to drop'
+--select 'select ''drop user[''+name+'']'' from sysusers where name not in('
+--select ''''+name+''',' from sysusers
+--PRINT '''dropusername'')'
+
+
+-- This is code I added to print generated drop statements. These get generated before the restore and the output is saved.
+-- After the restore you run it again and it will generate the actual drop statements needed. You then execute the drop
+-- statements to get rid of the users that did not exist prior to the restore.
+
+set nocount on;
+declare @rowcnt int
+declare @rowpointer int
+declare @loopVal varchar(2000)
+set @rowcnt = 0
+set @rowpointer = 1
+declare @tbl table
+(
+
+	id int identity(1,1) not null,
+	line varchar(2000)
+)
+PRINT'--list of users to drop'
+insert into @tbl select 'use ' + DB_NAME() + ';';
+insert into @tbl select 'select ''drop user [''+name+'']'' from sysusers where name not in(';
+insert into @tbl select ''''+name+''',' from sysusers;
+insert into @tbl select '''reallylongusernamethatdoesnotexistjusttoclosetheinclause'')';
+
+SELECT @rowcnt = count(*) From @tbl
+
+WHILE (@rowpointer <= @rowcnt)
+BEGIN
+	SELECT @loopVal = line FROM @tbl WHERE @rowpointer = id ;
+	PRINT @loopVal
+	SET @rowpointer = @rowpointer + 1;
+END
+
+
+
+--In some cases, the script to "drop users" will want to drop a user that owns a schema and this will create an error.
+--This is to be expected and you need to decide how you want to deal with it.  If there are no objects in the schema
+--perhaps just drop it.  If the user owns objects, that needs to be dealt with differently and your cross environment
+--restore needs to be discussed with the data owners. 
+PRINT '-- Done executing script ' + convert(varchar(50), getdate(), 109)
+PRINT '-- REMEMBER TO RUN SP_CHANGE_USERS_LOGIN'
+
+
+
+
+-- ==================================================================================
+-- 04) Copy backup from share to local drive on server
+-- ==================================================================================
+
+
+
+
+-- ==================================================================================
+-- 05) RESTORE DB (via RDP to server)
+--			Make sure file locations line up)
+-- ==================================================================================
+/*
+
+DECLARE @dbname nvarchar(100)
+SET @dbname = 'x'
+SELECT 'Database [' +  db_name() + '] access mode is: ' + CAST(DATABASEPROPERTYEX(@dbname,'UserAccess')AS nvarchar(2000))  AS 'Current Database Access Mode'
+
+
+USE [master]
+GO
+ALTER DATABASE [x] 
+SET SINGLE_USER WITH ROLLBACK IMMEDIATE
+GO
+
+RESTORE DATABASE [x] FROM  DISK = N'x' WITH  FILE = 1,  NOUNLOAD,  REPLACE,  STATS = 10
+GO
+
+ALTER DATABASE [x]
+SET MULTI_USER;
+
+*/
+
+
+-- ==================================================================================
+-- 5a) Check row counts between source and new target. Save to an excel file
+-- ==================================================================================
+--http://stackoverflow.com/questions/2221555/how-to-fetch-the-row-count-for-all-tables-in-a-sql-server-database
+-- Shows all user tables and row counts for the current database 
+-- Remove is_ms_shipped = 0 check to include system objects 
+-- i.index_id < 2 indicates clustered index (1) or hash table (0) 
+
+/*
+
+USE XXXX
+SELECT 
+	@@SERVERNAME as servername, 
+	DB_NAME() as dbname, 
+	o.name as tablename,
+	ddps.row_count 
+FROM sys.indexes AS i
+  INNER JOIN sys.objects AS o ON i.OBJECT_ID = o.OBJECT_ID
+  INNER JOIN sys.dm_db_partition_stats AS ddps ON i.OBJECT_ID = ddps.OBJECT_ID
+  AND i.index_id = ddps.index_id 
+WHERE i.index_id < 2  AND o.is_ms_shipped = 0 
+ORDER BY o.NAME
+
+*/
+
+
+-- ==================================================================================
+-- 06) Remove any new users which were in prod but not in qa
+		-- Compare the SRC and TARGET screen shots. Script the drop statements via SSMS
+-- ==================================================================================
+/*
+
+		-- paste generated drop user statements here for reference.
+
+*/
+
+-- ==================================================================================
+-- 07) Restore QA users
+		-- Create any users that were scripted in earlier steps. These are the users
+		-- that existed in TARGET but not in SRC DB.
+-- ==================================================================================
+/*
+	
+		-- Use script from step 3
+	
+*/
+
+
+
+
+-- ==================================================================================
+-- 08) Restore QA roles
+-- ==================================================================================
+/*
+
+		-- Use script from step 3
+		
+*/
+
+-- ==================================================================================
+-- 09) Synch the SIDS
+-- ==================================================================================
+/*
+
+-- Run this to identify users who need SID synch. 
+-- If this returns rows take the ouput and run against the DB
+-- Paste the generated statements below for reference
+
+USE XXXXX
+SELECT 'EXEC sp_change_users_login ''Update_One'', ''' + name + ''',''' + name + ''''
+  FROM sysusers
+WHERE issqluser = 1 
+   AND (sid IS NOT NULL
+   AND  sid <> 0x0)
+   AND (LEN(sid) <= 16)
+   AND SUSER_SNAME(sid) IS NULL
+ORDER BY NAME
+
+
+
+
+*/
+
+-- ==================================================================================
+-- 10) CHANGE THE DB OWNER to SA
+-- ==================================================================================
+/*
+
+	ALTER AUTHORIZATION ON DATABASE::XXXXXXXX TO SA
+
+*/
+
+-- ==================================================================================
+-- 11) Determine if Compatibility needs to be changed.
+-- ==================================================================================
+/*
+
+	SELECT compatibility_level FROM sys.databases WHERE name = 'XXXXXXXX';  
+*/
+
+
+-- ==================================================================================
+-- 12) Delete backup from target server
+-- ==================================================================================
+
+
+-- ==================================================================================
+-- 12a) 
+    
+    /*
+
+**************************************************************************************************************
+
+    Check recovery model. Should it be full or simple in the environment to which 
+    this DB is being resored?
+
+**************************************************************************************************************
+
+
+    */
+
+-- ==================================================================================
+-- 12b) Update Statistics
+-- ==================================================================================
+--exec sp_updatestats
+
+
+-- ==================================================================================
+
+
+-- ==================================================================================
+-- 13) Shrink the log file (optional)
+-- ==================================================================================
+
+/*
+USE XXXX
+GO
+CHECKPOINT;
+GO
+CHECKPOINT; -- run twice to ensure file wrap-around
+GO
+DBCC SHRINKFILE(logicalFileName, xxxx); -- unit is set in MBs
+GO
+*/
+
+-- ==================================================================================
+-- 14) Notify end user and DBA team
+-- ==================================================================================
+
+
+-- ==================================================================================
+-- 15) Resolve assignment in HEAT.
+-- ==================================================================================
+
+
