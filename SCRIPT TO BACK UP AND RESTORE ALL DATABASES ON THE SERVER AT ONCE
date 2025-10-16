@@ -43,6 +43,8 @@ and d.name not in ('master', 'model', 'msdb', 'tempdb', 'resource', 'ReportServe
 --and d.name = 'Audit'
 GO
 
+--Note you need to run this select * from sys.dm_server_services
+HEALTHPARTNERS\sqlinfprdsvc$  to know the server acct and give the server acct on the path where the full and diff backup going too 
 
 
 
